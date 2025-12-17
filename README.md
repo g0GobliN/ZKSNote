@@ -1,4 +1,4 @@
-# Secure Notes - Encrypted Note-Taking App
+# ZKS Note - Encrypted Note-Taking App
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)
@@ -28,7 +28,7 @@ A secure, privacy-focused note-taking application with client-side encryption. Y
 1. Clone the repository
    ```bash
    git clone https://github.com/yourusername/secure-notes.git
-   cd secure-notes
+   cd zks_note
    ```
 
 2. Install dependencies
