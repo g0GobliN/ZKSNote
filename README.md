@@ -27,7 +27,7 @@ A secure, privacy-focused note-taking application with client-side encryption. Y
 
 1. Clone the repository
    ```bash
-   git clone https://github.com/yourusername/secure-notes.git
+   git clone https://github.com/yourusername/ZKSNote.git
    cd zks_note
    ```
 
