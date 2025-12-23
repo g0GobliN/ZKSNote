@@ -1,16 +1,25 @@
-import { useState, useEffect } from 'react';
-import { AuthForm } from '@/components/AuthForm';
-import { Dashboard } from '@/components/Dashboard';
-import { getSession } from '@/lib/storage';
+import { useState, useEffect } from "react";
+import { AuthForm } from "@/components/AuthForm";
+import { Dashboard } from "@/components/Dashboard";
+import { ShareViewer } from "@/components/ShareViewer";
+import { getSessionKey } from "@/lib/storage";
 
 const Index = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isShareView, setIsShareView] = useState(false);
 
   useEffect(() => {
-    // Check if user has an active session
-    const session = getSession();
-    setIsAuthenticated(!!session?.encryptionKey);
+    // Check for a share link in the URL hash
+    if (window.location.hash && window.location.hash.includes("d=")) {
+      setIsShareView(true);
+      setIsLoading(false);
+      return;
+    }
+
+    // Otherwise, check for a regular user session
+    const sessionKey = getSessionKey();
+    setIsAuthenticated(!!sessionKey);
     setIsLoading(false);
   }, []);
 
@@ -22,6 +31,12 @@ const Index = () => {
     );
   }
 
+  // Render the share viewer if the URL is a share link
+  if (isShareView) {
+    return <ShareViewer />;
+  }
+
+  // Render the auth form or dashboard for regular use
   if (!isAuthenticated) {
     return <AuthForm onAuthenticated={() => setIsAuthenticated(true)} />;
   }

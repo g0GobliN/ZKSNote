@@ -1,27 +1,58 @@
-import { useState, useEffect, useRef } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { CodeEditor } from '@/components/CodeEditor';
-import { 
-  Plus, 
-  FileText, 
-  Trash2, 
-  Save, 
-  LogOut, 
+import { useState, useEffect, useRef } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { CodeEditor } from "@/components/CodeEditor";
+import {
+  Plus,
+  FileText,
+  Trash2,
+  Save,
+  LogOut,
   ChevronDown,
   ChevronRight,
   Code2,
   X,
   Share2,
   Download,
-  Upload
-} from 'lucide-react';
-import { Note, getNotes, saveNote, deleteNote, getSession, clearSession, generateId } from '@/lib/storage';
-import { encryptContent, decryptContent } from '@/lib/encryption';
-import { toast } from 'sonner';
-import { createSecureShareLink } from '@/lib/secureSharing';
-import { generateKey, encryptData, decryptData, generateSalt } from '@/lib/encryption';
-import { PasswordDialog } from '@/components/PasswordDialog';
+  Upload,
+} from "lucide-react";
+import {
+  Note,
+  getNotes,
+  saveNote,
+  deleteNote,
+  getSessionKey,
+  clearSession,
+  generateId,
+} from "@/lib/storage";
+import {
+  encryptData,
+  decryptData,
+  deriveKey,
+  generateSalt,
+} from "@/lib/encryption";
+import { toast } from "sonner";
+import { createSecureShareLink, SharePayload } from "@/lib/secureSharing";
+import { PasswordDialog } from "@/components/PasswordDialog";
+import {
+  Sidebar,
+  SidebarProvider,
+  SidebarTrigger,
+  SidebarHeader,
+  SidebarContent,
+  SidebarFooter,
+  SidebarMenu,
+  SidebarMenuItem,
+  SidebarMenuButton,
+  SidebarInset,
+  SidebarSeparator,
+} from "@/components/ui/sidebar";
 
 interface DashboardProps {
   onLogout: () => void;
@@ -31,287 +62,406 @@ interface CodeSnippet {
   id: string;
   code: string;
   language: string;
+}
+
+interface ExpandedCodeSnippet extends CodeSnippet {
   isExpanded: boolean;
 }
 
+// This represents the decrypted content of a note
+interface NoteContent {
+  content: string;
+  snippets: CodeSnippet[];
+}
+
+// Extends NoteContent for imported files that might have extra metadata
+interface ImportedNote extends NoteContent {
+  title?: string;
+  createdAt?: number;
+}
+
 const LANGUAGES = [
-  { value: 'plaintext', label: 'Plain Text' },
-  { value: 'javascript', label: 'JavaScript' },
-  { value: 'typescript', label: 'TypeScript' },
-  { value: 'python', label: 'Python' },
-  { value: 'java', label: 'Java' },
-  { value: 'csharp', label: 'C#' },
-  { value: 'cpp', label: 'C++' },
-  { value: 'go', label: 'Go' },
-  { value: 'rust', label: 'Rust' },
-  { value: 'html', label: 'HTML' },
-  { value: 'css', label: 'CSS' },
-  { value: 'json', label: 'JSON' },
-  { value: 'sql', label: 'SQL' },
-  { value: 'markdown', label: 'Markdown' },
+  { value: "plaintext", label: "Plain Text" },
+  { value: "javascript", label: "JavaScript" },
+  { value: "typescript", label: "TypeScript" },
+  { value: "python", label: "Python" },
+  { value: "java", label: "Java" },
+  { value: "csharp", label: "C#" },
+  { value: "cpp", label: "C++" },
+  { value: "go", label: "Go" },
+  { value: "rust", label: "Rust" },
+  { value: "html", label: "HTML" },
+  { value: "css", label: "CSS" },
+  { value: "json", label: "JSON" },
+  { value: "sql", label: "SQL" },
+  { value: "markdown", label: "Markdown" },
 ];
 
 export const Dashboard = ({ onLogout }: DashboardProps) => {
   const [notes, setNotes] = useState<Note[]>([]);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
-  const [editingTitle, setEditingTitle] = useState('');
-  const [editingContent, setEditingContent] = useState('');
-  const [codeSnippets, setCodeSnippets] = useState<CodeSnippet[]>([]);
+  const [editingTitle, setEditingTitle] = useState("");
+  const [editingContent, setEditingContent] = useState("");
+  const [codeSnippets, setCodeSnippets] = useState<ExpandedCodeSnippet[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isEditingNote, setIsEditingNote] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
-  const [passwordAction, setPasswordAction] = useState<(password?: string) => Promise<void>>(async () => {});
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [passwordDialogOptions, setPasswordDialogOptions] = useState<{
+    title: string;
+    description: string;
+    onConfirm: (password: string) => Promise<void>;
+  }>({ title: "", description: "", onConfirm: async () => {} });
 
-  const encryptionKey = getSession()?.encryptionKey || '';
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const encryptionKey = getSessionKey();
 
   useEffect(() => {
+    if (!encryptionKey) {
+      toast.error("Session expired or key is missing. Please log in again.");
+      onLogout();
+      return;
+    }
     setNotes(getNotes());
-  }, []);
+  }, [encryptionKey, onLogout]);
 
-  const handleCreateNote = () => {
+  const filteredNotes = notes.filter((note) => 
+    note.title.toLowerCase().includes(searchQuery.toLowerCase()),
+  );
+
+  const handleCreateNote = async () => {
+    if (!encryptionKey) return;
+
+    const emptyPayload: NoteContent = { content: "", snippets: [] };
+    const { encryptedData, iv } = await encryptData(
+      JSON.stringify(emptyPayload),
+      encryptionKey,
+    );
+
     const newNote: Note = {
       id: generateId(),
-      title: 'Untitled Note',
-      encryptedContent: encryptContent(JSON.stringify({ content: '', snippets: [] }), encryptionKey),
-      language: 'plaintext',
+      title: "Untitled Note",
+      encryptedContent: { data: encryptedData, iv: iv },
+      language: "plaintext",
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    
+
     saveNote(newNote);
     setNotes([...notes, newNote]);
-    handleSelectNote(newNote);
-    toast.success('New note created');
+    await handleSelectNote(newNote);
+    toast.success("New note created");
   };
 
-  const handleSelectNote = (note: Note) => {
+  const handleSelectNote = async (note: Note) => {
+    if (!encryptionKey) return;
     if (hasUnsavedChanges && selectedNote) {
-      handleSaveNote();
+      await handleSaveNote();
     }
 
-    const decrypted = decryptContent(note.encryptedContent, encryptionKey);
-    if (decrypted) {
-      try {
-        const parsed = JSON.parse(decrypted);
-        setEditingContent(parsed.content || '');
-        setCodeSnippets((parsed.snippets || []).map((s: any) => ({ ...s, isExpanded: false })));
-      } catch {
-        setEditingContent(decrypted);
-        setCodeSnippets([]);
+    try {
+      const decrypted = await decryptData(
+        note.encryptedContent.data,
+        encryptionKey,
+        note.encryptedContent.iv,
+      );
+      if (decrypted) {
+        const parsed: NoteContent = JSON.parse(decrypted);
+        setEditingContent(parsed.content || "");
+        setCodeSnippets(
+          (parsed.snippets || []).map((s) => ({
+            ...s,
+            isExpanded: false,
+          })),
+        );
       }
-    } else {
-      setEditingContent('');
+    } catch (error) {
+      console.error("Decryption failed:", error);
+      toast.error(
+        "Failed to decrypt note. The key might be wrong or data corrupted.",
+      );
+      setEditingContent("");
       setCodeSnippets([]);
-      toast.error('Failed to decrypt note');
     }
-    
+
     setEditingTitle(note.title);
     setSelectedNote(note);
     setHasUnsavedChanges(false);
     setIsEditingNote(false);
   };
 
-  const handleSaveNote = () => {
-    if (!selectedNote) return;
+  const handleSaveNote = async () => {
+    if (!selectedNote || !encryptionKey) return;
 
-    const snippetsToSave = codeSnippets.map(({ id, code, language }) => ({ id, code, language }));
-    const payload = JSON.stringify({ content: editingContent, snippets: snippetsToSave });
-    const encryptedContent = encryptContent(payload, encryptionKey);
+    const snippetsToSave: CodeSnippet[] = codeSnippets.map(
+      ({ id, code, language }) => ({
+        id,
+        code,
+        language,
+      }),
+    );
+    const payload: NoteContent = {
+      content: editingContent,
+      snippets: snippetsToSave,
+    };
+    const { encryptedData, iv } = await encryptData(
+      JSON.stringify(payload),
+      encryptionKey,
+    );
 
     const updatedNote: Note = {
       ...selectedNote,
       title: editingTitle,
-      encryptedContent,
+      encryptedContent: { data: encryptedData, iv: iv },
       updatedAt: Date.now(),
     };
 
     saveNote(updatedNote);
-    setNotes(notes.map(n => n.id === updatedNote.id ? updatedNote : n));
+    setNotes(notes.map((n) => (n.id === updatedNote.id ? updatedNote : n)));
     setSelectedNote(updatedNote);
     setHasUnsavedChanges(false);
-    toast.success('Note saved');
+    toast.success("Note saved");
   };
 
   const handleDeleteNote = (id: string) => {
     deleteNote(id);
-    setNotes(notes.filter(n => n.id !== id));
+    setNotes(notes.filter((n) => n.id !== id));
     if (selectedNote?.id === id) {
       setSelectedNote(null);
-      setEditingContent('');
+      setEditingContent("");
       setCodeSnippets([]);
-      setEditingTitle('');
+      setEditingTitle("");
     }
-    toast.success('Note deleted');
+    toast.success("Note deleted");
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (hasUnsavedChanges && selectedNote) {
-      handleSaveNote();
+      await handleSaveNote();
     }
     clearSession();
     onLogout();
   };
 
   const addCodeSnippet = () => {
-    const newSnippet: CodeSnippet = {
+    const newSnippet: ExpandedCodeSnippet = {
       id: `code${codeSnippets.length + 1}`,
-      code: '',
-      language: 'javascript',
+      code: "",
+      language: "javascript",
       isExpanded: true,
     };
     setCodeSnippets([...codeSnippets, newSnippet]);
     setHasUnsavedChanges(true);
   };
 
-  const updateSnippet = (id: string, updates: Partial<CodeSnippet>) => {
-    setCodeSnippets(snippets => 
-      snippets.map(s => s.id === id ? { ...s, ...updates } : s)
+  const updateSnippet = (id: string, updates: Partial<ExpandedCodeSnippet>) => {
+    setCodeSnippets((snippets) =>
+      snippets.map((s) => (s.id === id ? { ...s, ...updates } : s)),
     );
     setHasUnsavedChanges(true);
   };
 
   const removeSnippet = (id: string) => {
-    setCodeSnippets(snippets => snippets.filter(s => s.id !== id));
+    setCodeSnippets((snippets) => snippets.filter((s) => s.id !== id));
     setHasUnsavedChanges(true);
   };
 
   const toggleSnippet = (id: string) => {
-    setCodeSnippets(snippets => 
-      snippets.map(s => s.id === id ? { ...s, isExpanded: !s.isExpanded } : s)
+    setCodeSnippets((snippets) =>
+      snippets.map((s) =>
+        s.id === id ? { ...s, isExpanded: !s.isExpanded } : s,
+      ),
     );
   };
 
   const insertCodeTag = (snippetId: string) => {
     const tag = `[${snippetId}]`;
-    setEditingContent(prev => prev + tag);
+    setEditingContent((prev) => prev + tag);
     setHasUnsavedChanges(true);
   };
 
-  // Secure share note
   const handleSecureShare = async () => {
-    setPasswordAction(async (password?: string) => {
+    const shareAction = async (password?: string) => {
       try {
-        const { link } = await createSecureShareLink(
-          {
-            title: editingTitle,
-            content: editingContent,
-            snippets: codeSnippets,
-            metadata: {
-              createdAt: selectedNote?.createdAt || Date.now(),
-              updatedAt: Date.now()
-            }
-          },
-          { password: password || undefined }
-        );
+        const payload: SharePayload = {
+          title: editingTitle,
+          content: editingContent,
+          snippets: codeSnippets.map(({ id, code, language }) => ({
+            id,
+            code,
+            language,
+          })),
+        };
+        const { link } = await createSecureShareLink(payload, {
+          password: password || undefined,
+        });
         await navigator.clipboard.writeText(link);
-        toast.success('Secure link copied to clipboard!');
+        toast.success("Secure link copied to clipboard!");
       } catch (error) {
-        console.error('Failed to create secure link:', error);
-        toast.error('Failed to create secure link');
+        console.error("Failed to create secure link:", error);
+        toast.error("Failed to create secure link");
       }
-    });
+    };
 
-    // Ask if user wants to add password protection
-    if (confirm('Add password protection to this link?')) {
+    if (window.confirm("Add password protection to this share link?")) {
+      setPasswordDialogOptions({
+        title: "Password Protect Link",
+        description: "Enter a password to encrypt the share link.",
+        onConfirm: shareAction,
+      });
       setIsPasswordDialogOpen(true);
     } else {
-      passwordAction();
+      await shareAction();
     }
   };
 
-  // Secure export note
   const handleSecureExport = async () => {
-    setPasswordAction(async (password: string) => {
-      try {
-        const data = {
-          version: '1.0',
-          timestamp: new Date().toISOString(),
-          title: editingTitle,
-          content: editingContent,
-          snippets: codeSnippets,
-          metadata: {
-            createdAt: selectedNote?.createdAt || Date.now(),
-            updatedAt: Date.now()
-          }
-        };
+  const exportAction = async (password: string) => {
+    if (!password) {
+      toast.error("A password is required for secure export.");
+      return;
+    }
+    try {
+      const salt = generateSalt();
+      const cryptoKey = await deriveKey(password, new Uint8Array(salt).buffer);
+      
+      const dataToExport: NoteContent = {
+        content: editingContent,
+        snippets: codeSnippets.map(({ id, code, language }) => ({
+          id,
+          code,
+          language,
+        })),
+      };
+      const { encryptedData, iv } = await encryptData(
+        JSON.stringify(dataToExport),
+        cryptoKey,  // Pass the CryptoKey directly
+      );
 
-        const { encryptedData, iv } = await encryptData(JSON.stringify(data), password);
-        const salt = generateSalt();
-        
-        const blob = new Blob([JSON.stringify({
-          encryptedData,
-          iv,
-          salt,
-          version: '1.0'
-        }, null, 2)], { type: 'application/json' });
+        const blob = new Blob(
+          [
+            JSON.stringify(
+              {
+                encryptedData,
+                iv,
+                salt: Array.from(salt),
+                version: "2.0-export",
+              },
+              null,
+              2,
+            ),
+          ],
+          { type: "application/json" },
+        );
 
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
+        const a = document.createElement("a");
         a.href = url;
-        a.download = `secure-note-${editingTitle.replace(/[^a-z0-9]/gi, '-').toLowerCase()}.snote`;
+        a.download = `secure-note-${editingTitle.replace(/[^a-z0-9]/gi, "-").toLowerCase()}.snote`;
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
-        toast.success('Note exported securely!');
+
+        toast.success("Note exported securely!");
       } catch (error) {
-        console.error('Export failed:', error);
-        toast.error('Failed to export note');
+        console.error("Export failed:", error);
+        toast.error("Failed to export note");
       }
+    };
+
+    setPasswordDialogOptions({
+      title: "Set Export Password",
+      description:
+        "This password will be required to decrypt the exported file.",
+      onConfirm: exportAction,
     });
-    
     setIsPasswordDialogOpen(true);
   };
 
-  // Import notes from JSON file
-  const handleImportNotes = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileImport = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
+      const content = e.target?.result as string;
       try {
-        const imported = JSON.parse(e.target?.result as string);
-        const notesArray = Array.isArray(imported) ? imported : [imported];
-        
-        let importedCount = 0;
-        notesArray.forEach((noteData: any) => {
-          const payload = JSON.stringify({
-            content: noteData.content || '',
-            snippets: noteData.snippets || [],
-          });
-          
-          const newNote: Note = {
-            id: generateId(),
-            title: noteData.title || 'Imported Note',
-            encryptedContent: encryptContent(payload, encryptionKey),
-            language: 'plaintext',
-            createdAt: noteData.createdAt || Date.now(),
-            updatedAt: Date.now(),
+        if (file.name.endsWith(".snote")) {
+          const importAction = async (password: string) => {
+            if (!password) {
+              toast.error("Password is required to import this file.");
+              return;
+            }
+            try {
+              const parsed = JSON.parse(content);
+              const salt = new Uint8Array(parsed.salt);
+              const key = await deriveKey(password, new Uint8Array(salt).buffer);
+              const decrypted = await decryptData(
+                parsed.encryptedData,
+                key,
+                parsed.iv,
+              );
+              const importedData: NoteContent = JSON.parse(decrypted);
+              await createNoteFromData(importedData);
+              toast.success("Secure note imported successfully!");
+            } catch (err) {
+              console.error(err);
+              toast.error("Import failed. Invalid password or corrupted file.");
+            }
           };
-          
-          saveNote(newNote);
-          importedCount++;
-        });
-        
-        setNotes(getNotes());
-        toast.success(`Imported ${importedCount} note(s) successfully!`);
+          setPasswordDialogOptions({
+            title: "Enter Import Password",
+            description: `Enter the password for "${file.name}".`,
+            onConfirm: importAction,
+          });
+          setIsPasswordDialogOpen(true);
+        } else {
+          // Handle plain JSON import
+          const importedNote: ImportedNote = JSON.parse(content);
+          await createNoteFromData(
+            importedNote,
+            `Imported: ${importedNote.title || "Untitled"}`,
+          );
+          toast.success(`Imported 1 note successfully!`);
+        }
       } catch (err) {
-        toast.error('Invalid JSON file. Please check the format.');
+        toast.error("Invalid file format.");
       }
     };
     reader.readAsText(file);
-    event.target.value = '';
+    event.target.value = "";
   };
 
-  // Render note content with code tags highlighted
+  const createNoteFromData = async (data: ImportedNote, title?: string) => {
+    if (!encryptionKey) return;
+    const payload: NoteContent = {
+      content: data.content || "",
+      snippets: data.snippets || [],
+    };
+    const { encryptedData, iv } = await encryptData(
+      JSON.stringify(payload),
+      encryptionKey,
+    );
+    const newNote: Note = {
+      id: generateId(),
+      title: title || data.title || "Imported Note",
+      encryptedContent: { data: encryptedData, iv: iv },
+      language: "plaintext",
+      createdAt: data.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    };
+    saveNote(newNote);
+    setNotes((prev) => [...prev, newNote]);
+  };
+
   const renderContentWithTags = () => {
     const parts = editingContent.split(/(\[code\d+\])/g);
     return parts.map((part, index) => {
       const match = part.match(/\[(code\d+)\]/);
       if (match) {
         const snippetId = match[1];
-        const snippet = codeSnippets.find(s => s.id === snippetId);
+        const snippet = codeSnippets.find((s) => s.id === snippetId);
         if (snippet) {
           return (
             <button
@@ -327,9 +477,11 @@ export const Dashboard = ({ onLogout }: DashboardProps) => {
             </button>
           );
         }
-        // Show tag even if snippet not found (greyed out)
         return (
-          <span key={index} className="inline-flex items-center gap-1 px-2 py-0.5 mx-1 rounded bg-muted text-muted-foreground text-xs font-mono">
+          <span
+            key={index}
+            className="inline-flex items-center gap-1 px-2 py-0.5 mx-1 rounded bg-muted text-muted-foreground text-xs font-mono"
+          >
             <Code2 className="w-3 h-3" />
             {snippetId}
           </span>
@@ -340,85 +492,109 @@ export const Dashboard = ({ onLogout }: DashboardProps) => {
   };
 
   return (
-    <div className="h-screen flex bg-background">
-      {/* Sidebar */}
-      <div className="w-56 bg-sidebar-background border-r border-sidebar-border flex flex-col">
-        <div className="p-4 border-b border-sidebar-border">
-          <h1 className="text-sm font-semibold text-sidebar-foreground">Notes</h1>
-        </div>
+    <SidebarProvider>
+      <Sidebar>
+        <SidebarHeader>
+          <h1 className="text-sm font-semibold text-foreground px-2">Notes</h1>
+        </SidebarHeader>
+        <SidebarContent>
+            {/* Search bar */}
+          <div className="px-2 pb-2 pt-2">
+            <Input
+              placeholder="Search notes..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-8 text-sm"
+            />
+          </div>
+          <SidebarMenu>
+           {filteredNotes.map((note) => (
+  <SidebarMenuItem key={note.id}>
+    <SidebarMenuButton
+      onClick={() => handleSelectNote(note)}
+      isActive={selectedNote?.id === note.id}
+      className="w-full"
+    >
+      <FileText className="w-4 h-4" />
+      <span className="truncate">{note.title}</span>
+    </SidebarMenuButton>
+  </SidebarMenuItem>
+))}
 
-        <div className="flex-1 overflow-y-auto p-2 scrollbar-thin">
-          {notes.map((note) => (
-            <button
-              key={note.id}
-              onClick={() => handleSelectNote(note)}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-left text-sm transition-colors ${
-                selectedNote?.id === note.id
-                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                  : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground'
-              }`}
-            >
-              <FileText className="w-4 h-4 flex-shrink-0 opacity-60" />
-              <span className="truncate">{note.title}</span>
-            </button>
-          ))}
-        </div>
+          </SidebarMenu>
+        </SidebarContent>
+        <SidebarSeparator />
+        <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={handleCreateNote} className="w-full">
+                <Plus className="w-4 h-4 mr-2" /> New Note
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                onClick={handleSecureExport}
+                disabled={!selectedNote}
+                className="w-full"
+              >
+                <Download className="w-4 h-4 mr-2" /> Export
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full"
+              >
+                <Upload className="w-4 h-4 mr-2" /> Import
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,.snote"
+              onChange={handleFileImport}
+              className="hidden"
+            />
+            <SidebarMenuItem>
+              <SidebarMenuButton onClick={handleLogout} className="w-full">
+                <LogOut className="w-4 h-4 mr-2" /> Logout
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      </Sidebar>
 
-        <div className="p-2 border-t border-sidebar-border space-y-1">
-          <Button onClick={handleCreateNote} variant="ghost" size="sm" className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground">
-            <Plus className="w-4 h-4 mr-2" />
-            New Note
-          </Button>
-          <Button 
-            onClick={handleSecureExport} 
-            variant="ghost" 
-            size="sm" 
-            className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground"
-            disabled={!selectedNote}
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export Securely
-          </Button>
-          <Button onClick={() => fileInputRef.current?.click()} variant="ghost" size="sm" className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground">
-            <Upload className="w-4 h-4 mr-2" />
-            Import
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json"
-            onChange={handleImportNotes}
-            className="hidden"
-          />
-          <Button onClick={handleLogout} variant="ghost" size="sm" className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground">
-            <LogOut className="w-4 h-4 mr-2" />
-            Logout
-          </Button>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <SidebarInset>
         {selectedNote ? (
-          <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Header */}
-            <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-              <Input
-                type="text"
-                value={editingTitle}
-                onChange={(e) => {
-                  setEditingTitle(e.target.value);
-                  setHasUnsavedChanges(true);
-                }}
-                className="text-lg font-medium bg-transparent border-none focus-visible:ring-0 px-0 h-auto max-w-md"
-                placeholder="Note title..."
-              />
+          <div className="w-full flex-1 flex flex-col overflow-hidden">
+            <div className="px-4 sm:px-6 py-4 border-b border-border flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                 <div className="hidden md:block">
+                  {/* <Input
+                    placeholder="Search notes..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="h-8 w-44 text-sm"
+                  /> */}
+                </div>
+                <SidebarTrigger className="md:hidden" />
+                <Input
+                  type="text"
+                  value={editingTitle}
+                  onChange={(e) => {
+                    setEditingTitle(e.target.value);
+                    setHasUnsavedChanges(true);
+                  }}
+                  className="text-lg font-medium bg-transparent border-none focus-visible:ring-0 px-0 h-auto flex-1"
+                  placeholder="Note title..."
+                />
+              </div>
               <div className="flex items-center gap-2">
-                <Button 
-                  onClick={handleSecureShare} 
-                  variant="outline" 
-                  size="sm" 
-                  title="Share securely"
+                <Button
+                  onClick={handleSecureShare}
+                  variant="outline"
+                  size="sm"
+                  className="hidden md:inline-flex"
                   disabled={!selectedNote}
                 >
                   <Share2 className="w-4 h-4" />
@@ -430,34 +606,34 @@ export const Dashboard = ({ onLogout }: DashboardProps) => {
                 <Button
                   onClick={() => handleDeleteNote(selectedNote.id)}
                   variant="ghost"
-                  size="sm"
+                  size="icon"
                   className="text-muted-foreground hover:text-destructive"
                 >
                   <Trash2 className="w-4 h-4" />
                 </Button>
               </div>
             </div>
-
-            {/* Content Area */}
-            <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
-              <div className="max-w-3xl mx-auto space-y-4">
-                {/* Note Content */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 scrollbar-thin w-full">
+              <div className="max-w-3xl w-full mx-auto space-y-4">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground uppercase tracking-wide">Note</span>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
+                    <span className="text-xs text-muted-foreground uppercase tracking-wide">
+                      Note
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       className="h-6 text-xs"
                       onClick={() => setIsEditingNote(!isEditingNote)}
                     >
-                      {isEditingNote ? 'Done' : 'Edit'}
+                      {isEditingNote ? "Done" : "Edit"}
                     </Button>
                   </div>
-                  
                   {isEditingNote ? (
                     <div className="space-y-2">
-                      <span className="text-xs text-muted-foreground">Use [code1], [code2]... to reference snippets</span>
+                      <span className="text-xs text-muted-foreground">
+                        Use [code1], [code2]... to reference snippets
+                      </span>
                       <textarea
                         value={editingContent}
                         onChange={(e) => {
@@ -470,7 +646,7 @@ export const Dashboard = ({ onLogout }: DashboardProps) => {
                       />
                     </div>
                   ) : (
-                    <div 
+                    <div
                       className="w-full min-h-[280px] bg-card rounded-lg p-4 text-sm text-foreground border border-border cursor-pointer hover:border-primary/30 transition-colors"
                       onClick={() => !editingContent && setIsEditingNote(true)}
                     >
@@ -479,27 +655,37 @@ export const Dashboard = ({ onLogout }: DashboardProps) => {
                           {renderContentWithTags()}
                         </div>
                       ) : (
-                        <span className="text-muted-foreground" onClick={() => setIsEditingNote(true)}>
-                          Click to add notes... Use [code1], [code2] etc. to reference code snippets.
+                        <span
+                          className="text-muted-foreground"
+                          onClick={() => setIsEditingNote(true)}
+                        >
+                          Click to add notes... Use [code1], [code2] etc. to
+                          reference code snippets.
                         </span>
                       )}
                     </div>
                   )}
                 </div>
-
-                {/* Code Snippets */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs text-muted-foreground uppercase tracking-wide">Code Snippets</span>
-                    <Button onClick={addCodeSnippet} variant="ghost" size="sm" className="h-7 text-xs">
-                      <Plus className="w-3 h-3 mr-1" />
-                      Add Snippet
+                    <span className="text-xs text-muted-foreground uppercase tracking-wide">
+                      Code Snippets
+                    </span>
+                    <Button
+                      onClick={addCodeSnippet}
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                    >
+                      <Plus className="w-3 h-3 mr-1" /> Add Snippet
                     </Button>
                   </div>
-
-                  {codeSnippets.map((snippet, index) => (
-                    <div key={snippet.id} className="bg-card rounded-lg border border-border overflow-hidden">
-                      <div 
+                  {codeSnippets.map((snippet) => (
+                    <div
+                      key={snippet.id}
+                      className="bg-card rounded-lg border border-border overflow-hidden"
+                    >
+                      <div
                         className="px-4 py-2 flex items-center justify-between cursor-pointer hover:bg-secondary/30"
                         onClick={() => toggleSnippet(snippet.id)}
                       >
@@ -509,18 +695,24 @@ export const Dashboard = ({ onLogout }: DashboardProps) => {
                           ) : (
                             <ChevronRight className="w-4 h-4 text-muted-foreground" />
                           )}
-                          <span className="text-sm font-mono text-primary">[{snippet.id}]</span>
+                          <span className="text-sm font-mono text-primary">
+                            [{snippet.id}]
+                          </span>
                           <select
                             value={snippet.language}
                             onChange={(e) => {
                               e.stopPropagation();
-                              updateSnippet(snippet.id, { language: e.target.value });
+                              updateSnippet(snippet.id, {
+                                language: e.target.value,
+                              });
                             }}
                             onClick={(e) => e.stopPropagation()}
                             className="h-6 px-2 rounded bg-secondary border-none text-xs text-muted-foreground focus:outline-none"
                           >
-                            {LANGUAGES.map(lang => (
-                              <option key={lang.value} value={lang.value}>{lang.label}</option>
+                            {LANGUAGES.map((lang) => (
+                              <option key={lang.value} value={lang.value}>
+                                {lang.label}
+                              </option>
                             ))}
                           </select>
                         </div>
@@ -547,19 +739,19 @@ export const Dashboard = ({ onLogout }: DashboardProps) => {
                           </button>
                         </div>
                       </div>
-                      
                       {snippet.isExpanded && (
                         <div className="h-48 border-t border-border">
                           <CodeEditor
                             value={snippet.code}
-                            onChange={(value) => updateSnippet(snippet.id, { code: value })}
+                            onChange={(value) =>
+                              updateSnippet(snippet.id, { code: value })
+                            }
                             language={snippet.language}
                           />
                         </div>
                       )}
                     </div>
                   ))}
-
                   {codeSnippets.length === 0 && (
                     <div className="text-center py-8 text-muted-foreground text-sm">
                       No code snippets yet. Click "Add Snippet" to create one.
@@ -570,10 +762,14 @@ export const Dashboard = ({ onLogout }: DashboardProps) => {
             </div>
           </div>
         ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <FileText className="w-12 h-12 text-muted-foreground/30 mx-auto mb-4" />
-              <p className="text-muted-foreground text-sm mb-4">Select a note or create a new one</p>
+          <div className="flex-1 flex items-center justify-center text-center">
+            <div>
+              <div className="flex items-center gap-2 mb-4">
+                <SidebarTrigger className="md:hidden" />
+                <p className="text-muted-foreground text-sm">
+                  Select a note or create a new one
+                </p>
+              </div>
               <Button onClick={handleCreateNote} size="sm">
                 <Plus className="w-4 h-4 mr-2" />
                 New Note
@@ -581,20 +777,15 @@ export const Dashboard = ({ onLogout }: DashboardProps) => {
             </div>
           </div>
         )}
-      </div>
-      
+      </SidebarInset>
+
       <PasswordDialog
         open={isPasswordDialogOpen}
         onOpenChange={setIsPasswordDialogOpen}
-        onConfirm={async (password: string) => {
-          try {
-            await passwordAction(password);
-          } catch (error) {
-            console.error('Action failed:', error);
-            toast.error('Operation failed. Please try again.');
-          }
-        }}
+        title={passwordDialogOptions.title}
+        description={passwordDialogOptions.description}
+        onConfirm={passwordDialogOptions.onConfirm}
       />
-    </div>
+    </SidebarProvider>
   );
 };
