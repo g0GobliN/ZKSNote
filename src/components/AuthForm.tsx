@@ -45,7 +45,7 @@ export const AuthForm = ({ onAuthenticated }: AuthFormProps) => {
           return;
         }
 
-        const encryptionKey = await deriveKey(password, salt);
+        const encryptionKey = await deriveKey(password, salt as BufferSource);
         saveSessionKey(encryptionKey);
         toast.success("Welcome back!");
         onAuthenticated();
@@ -78,7 +78,7 @@ export const AuthForm = ({ onAuthenticated }: AuthFormProps) => {
         };
 
         saveUser(user);
-        const encryptionKey = await deriveKey(password, salt);
+        const encryptionKey = await deriveKey(password, salt as BufferSource);
         saveSessionKey(encryptionKey);
 
         toast.success("Account created successfully!");
@@ -100,22 +100,22 @@ export const AuthForm = ({ onAuthenticated }: AuthFormProps) => {
         <div className="absolute -bottom-[10%] -right-[10%] w-[40%] h-[40%] bg-primary/5 rounded-full blur-[120px]" />
       </div>
 
-      <div className="w-full max-w-[400px] z-10">
-        <div className="text-center mb-10 space-y-2">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 mb-4">
-            <ShieldCheck className="w-8 h-8 text-primary" />
+      <div className="w-full max-w-[280px] md:max-w-[350px] z-10">
+        <div className="text-center mb-8 space-y-2">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 mb-4">
+            <ShieldCheck className="w-7 h-7 text-primary" />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-white">
+          <h1 className="text-2xl font-bold tracking-tight text-white">
             ZKS-NOTE
           </h1>
-          <p className="text-muted-foreground">
+          <p className="text-muted-foreground text-sm">
             Secure, zero-knowledge architecture.
           </p>
         </div>
 
-        <div className="bg-card/50 backdrop-blur-xl rounded-3xl border border-white/10 p-8 shadow-2xl">
+        <div className="bg-card/50 backdrop-blur-xl rounded-3xl border border-white/10 p-6 shadow-2xl">
           {/* Tab Switcher */}
-          <div className="flex p-1 bg-black/20 rounded-xl mb-8 border border-white/5">
+          <div className="flex p-1 bg-black/20 rounded-xl mb-6 border border-white/5">
             <button
               className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${
                 isLogin ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-white"
@@ -134,7 +134,7 @@ export const AuthForm = ({ onAuthenticated }: AuthFormProps) => {
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground ml-1">
                 Username
@@ -146,7 +146,7 @@ export const AuthForm = ({ onAuthenticated }: AuthFormProps) => {
                   placeholder="Your unique ID"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="pl-10 bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 transition-all h-11"
+                  className="pl-10 bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 transition-all h-10"
                   required
                 />
               </div>
@@ -163,7 +163,7 @@ export const AuthForm = ({ onAuthenticated }: AuthFormProps) => {
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 pr-10 bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 transition-all h-11"
+                  className="pl-10 pr-10 bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 transition-all h-10"
                   required
                 />
                 <button
@@ -188,7 +188,7 @@ export const AuthForm = ({ onAuthenticated }: AuthFormProps) => {
                     placeholder="Repeat password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="pl-10 bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 transition-all h-11"
+                    className="pl-10 bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 transition-all h-10"
                     required
                   />
                 </div>
@@ -197,7 +197,7 @@ export const AuthForm = ({ onAuthenticated }: AuthFormProps) => {
 
             <Button 
               type="submit" 
-              className="w-full h-11 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl transition-all shadow-lg shadow-primary/20"
+              className="w-full h-10 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold rounded-xl transition-all shadow-lg shadow-primary/20"
               disabled={isLoading}
             >
               {isLoading ? (
@@ -214,7 +214,7 @@ export const AuthForm = ({ onAuthenticated }: AuthFormProps) => {
           </form>
         </div>
 
-        <div className="mt-8 text-center space-y-4">
+        <div className="mt-6 text-center space-y-4">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/5 border border-emerald-500/10">
             <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-500/80">
