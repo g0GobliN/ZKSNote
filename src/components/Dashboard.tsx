@@ -594,7 +594,6 @@ export const Dashboard = ({ onLogout }: DashboardProps) => {
                   onClick={handleSecureShare}
                   variant="outline"
                   size="sm"
-                  className="hidden md:inline-flex"
                   disabled={!selectedNote}
                 >
                   <Share2 className="w-4 h-4" />
